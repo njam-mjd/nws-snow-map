@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NWS Precip + Snow (7-Day) Map</title>
+
+  <!-- Leaflet -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; }
+
+    .hint{
+      position:absolute; top:10px; left:10px; z-index:999;
+      background:rgba(255,255,255,0.92); padding:8px 10px; border-radius:8px;
+      box-shadow:0 1px 6px rgba(0,0,0,0.15);
+      font:13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    .popup h3 { margin: 0 0 6px 0; font-size: 16px; }
+    .meta { color:#555; font-size:12px; margin: 4px 0 8px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 6px 6px; border-bottom: 1px solid #eee; vertical-align: top; }
+    th { text-align: left; font-weight: 600; }
+    .num { text-align: right; white-space: nowrap; }
+
+    .alerts { margin-top:10px; padding-top:8px; border-top:1px solid #ddd; }
+    .alert-item { margin:6px 0; }
+    .badge{
+      display:inline-block; padding:2px 6px; border:1px solid #ccc;
+      border-radius:10px; font-size:11px; margin-right:6px;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+  <div class="hint">Click anywhere to load NWS 7-day liquid precip + snowfall + PoP (grid forecast) and active alerts.</div>
+
+  <script>
+    // --- Config ---
+    const INITIAL_CENTER = [40.1, -74.5]; // NJ-ish
+    const INITIAL_ZOOM = 7;
+    const DAYS_TO_SHOW = 7;
+
+    // --- Map ---
+    const map = L.map("ma
