@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>NWS Precip + Snow (7-Day) Map</title>
+  <title>Probabilistic Snowfall (WPC PWPF) Map</title>
 
   <!-- Leaflet -->
   <link
@@ -22,39 +22,180 @@
     html, body { height: 100%; margin: 0; }
     #map { height: 100%; }
 
-    .hint{
+    .panel{
       position:absolute; top:10px; left:10px; z-index:999;
-      background:rgba(255,255,255,0.92); padding:8px 10px; border-radius:8px;
-      box-shadow:0 1px 6px rgba(0,0,0,0.15);
-      font:13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background:rgba(255,255,255,0.94); padding:10px 12px; border-radius:10px;
+      box-shadow:0 1px 6px rgba(0,0,0,0.18);
+      font:13px/1.35 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      min-width: 260px;
     }
-
-    .popup h3 { margin: 0 0 6px 0; font-size: 16px; }
-    .meta { color:#555; font-size:12px; margin: 4px 0 8px; }
-
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { padding: 6px 6px; border-bottom: 1px solid #eee; vertical-align: top; }
-    th { text-align: left; font-weight: 600; }
-    .num { text-align: right; white-space: nowrap; }
-
-    .alerts { margin-top:10px; padding-top:8px; border-top:1px solid #ddd; }
-    .alert-item { margin:6px 0; }
-    .badge{
-      display:inline-block; padding:2px 6px; border:1px solid #ccc;
-      border-radius:10px; font-size:11px; margin-right:6px;
+    .row { display:flex; gap:8px; align-items:center; margin:6px 0; }
+    label { width: 78px; color:#333; }
+    select { flex:1; padding:4px; }
+    .legend { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; }
+    .key { display:flex; align-items:center; gap:8px; margin:4px 0; }
+    .swatch { width:18px; height:0; border-top:3px solid; }
+    .meta { color:#555; font-size:12px; margin-top:6px; }
+    .btn {
+      margin-top:8px; width:100%;
+      padding:6px 8px; border:1px solid #ccc; border-radius:8px;
+      background:#fff; cursor:pointer;
     }
   </style>
 </head>
 
 <body>
   <div id="map"></div>
-  <div class="hint">Click anywhere to load NWS 7-day liquid precip + snowfall + PoP (grid forecast) and active alerts.</div>
+
+  <div class="panel">
+    <div><strong>Probabilistic snowfall</strong></div>
+    <div class="meta">WPC PWPF: probability of ≥ threshold snowfall in 24h (Days 1–3).</div>
+
+    <div class="row">
+      <label for="daySel">Forecast</label>
+      <select id="daySel">
+        <option value="1" selected>Day 1</option>
+        <option value="2">Day 2</option>
+        <option value="3">Day 3</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label for="thrSel">Threshold</label>
+      <select id="thrSel">
+        <option value="4" selected>≥ 4"</option>
+        <option value="8">≥ 8"</option>
+        <option value="12">≥ 12"</option>
+      </select>
+    </div>
+
+    <button class="btn" id="fitBtn" type="button">Fit to CONUS extent</button>
+
+    <div class="legend">
+      <div><strong>Legend (categories)</strong></div>
+      <div class="key"><span class="swatch" style="border-color:#0000ff"></span> Slight (10–39%)</div>
+      <div class="key"><span class="swatch" style="border-color:#008b00"></span> Moderate (40–69%)</div>
+      <div class="key"><span class="swatch" style="border-color:#ff0000"></span> High (70–100%)</div>
+      <div class="meta">Click the map to see the category at that point.</div>
+    </div>
+  </div>
 
   <script>
-    // --- Config ---
-    const INITIAL_CENTER = [40.1, -74.5]; // NJ-ish
-    const INITIAL_ZOOM = 7;
-    const DAYS_TO_SHOW = 7;
+    // Map init (NJ-ish start)
+    const map = L.map("map").setView([40.1, -74.5], 7);
 
-    // --- Map ---
-    const map = L.map("ma
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(map);
+
+    // WPC PWPF service (WMS + Query)
+    // Service contains layers for Day 1–3 and thresholds 4/8/12 inches.
+    const MAPSERVER_BASE = "https://mapservices.weather.noaa.gov/vector/rest/services/precip/wpc_prob_winter_precip/MapServer";
+    const WMS_URL = "https://mapservices.weather.noaa.gov/vector/services/precip/wpc_prob_winter_precip/MapServer/WMSServer";
+
+    // Layer ID mapping from the service:
+    // Day1: 4"=1, 8"=2, 12"=3
+    // Day2: 4"=6, 8"=7, 12"=8
+    // Day3: 4"=11, 8"=12, 12"=13
+    const LAYER_ID = {
+      1: { 4: 1, 8: 2, 12: 3 },
+      2: { 4: 6, 8: 7, 12: 8 },
+      3: { 4: 11, 8: 12, 12: 13 }
+    };
+
+    // WMS layer names are typically "show:ID"
+    function wmsLayerName(id) {
+      return `show:${id}`;
+    }
+
+    // Start with Day 1 >=4"
+    let currentDay = 1;
+    let currentThr = 4;
+    let currentLayerId = LAYER_ID[currentDay][currentThr];
+
+    let overlay = L.tileLayer.wms(WMS_URL, {
+      layers: wmsLayerName(currentLayerId),
+      format: "image/png",
+      transparent: true,
+      opacity: 0.85
+    }).addTo(map);
+
+    const daySel = document.getElementById("daySel");
+    const thrSel = document.getElementById("thrSel");
+    const fitBtn = document.getElementById("fitBtn");
+
+    fitBtn.addEventListener("click", () => {
+      // Approx CONUS bounds (service full extent is CONUS-ish)
+      map.fitBounds([[24.9, -129.6],[52.8, -62.3]]);
+    });
+
+    function updateOverlay() {
+      currentDay = Number(daySel.value);
+      currentThr = Number(thrSel.value);
+      currentLayerId = LAYER_ID[currentDay][currentThr];
+
+      if (overlay) map.removeLayer(overlay);
+      overlay = L.tileLayer.wms(WMS_URL, {
+        layers: wmsLayerName(currentLayerId),
+        format: "image/png",
+        transparent: true,
+        opacity: 0.85
+      }).addTo(map);
+    }
+
+    daySel.addEventListener("change", updateOverlay);
+    thrSel.addEventListener("change", updateOverlay);
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+      }[c]));
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}${txt ? " — " + txt.slice(0, 120) : ""}`);
+      }
+      return res.json();
+    }
+
+    function fmtLatLon(lat, lon) {
+      return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    }
+
+    function popupHtml(header, body) {
+      return `
+        <div style="font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">
+          <div style="font-weight:700; margin-bottom:6px;">${esc(header)}</div>
+          <div>${body}</div>
+        </div>
+      `;
+    }
+
+    // Query the selected layer at a point (intersects)
+    async function queryAtPoint(lat, lon, layerId) {
+      const url = new URL(`${MAPSERVER_BASE}/${layerId}/query`);
+      url.searchParams.set("where", "1=1");
+      url.searchParams.set("geometry", `${lon},${lat}`);
+      url.searchParams.set("geometryType", "esriGeometryPoint");
+      url.searchParams.set("inSR", "4326");
+      url.searchParams.set("spatialRel", "esriSpatialRelIntersects");
+      url.searchParams.set("outFields", "outlook,valid_time,issue_time,start_time,end_time,product");
+      url.searchParams.set("returnGeometry", "false");
+      url.searchParams.set("f", "pjson");
+      return fetchJson(url.toString());
+    }
+
+    map.on("click", async (e) => {
+      const { lat, lng } = e.latlng;
+
+      const header = `Day ${currentDay} · ≥ ${currentThr}" snowfall`;
+      const loading = popupHtml(header, `<div>Loading…</div><div style="color:#555;font-size:12px;">Point: ${esc(fmtLatLon(lat,lng))}</div>`);
+
+      const pop = L.popup({ maxWidth: 340 })
+        .setLatLng([lat, lng])
+        .setContent(loading)
+        .openOn(map);
